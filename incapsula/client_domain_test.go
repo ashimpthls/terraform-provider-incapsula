@@ -250,8 +250,9 @@ func TestClientAddDomainRetriesOn401ThenSucceeds(t *testing.T) {
 
 		count := atomic.AddInt32(&callCount, 1)
 		if count == 1 {
+			// Bare 401 (no structured error body) - reflects the observed
+			// transient auth-propagation-race signature that should be retried.
 			rw.WriteHeader(http.StatusUnauthorized)
-			rw.Write([]byte(`{"errors": [{"id": "error-1", "status": 401, "title": "Unauthorized", "detail": "unauthorized"}]}`))
 			return
 		}
 
@@ -314,8 +315,9 @@ func TestClientAddDomainExhaustsRetriesOn401(t *testing.T) {
 		}
 
 		atomic.AddInt32(&callCount, 1)
+		// Bare 401 (no structured error body) on every attempt - exercises
+		// the exhaustion path under the new "retry only bare 401" logic.
 		rw.WriteHeader(http.StatusUnauthorized)
-		rw.Write([]byte(`{"errors": [{"id": "error-1", "status": 401, "title": "Unauthorized", "detail": "unauthorized"}]}`))
 	}))
 	defer server.Close()
 
@@ -334,6 +336,62 @@ func TestClientAddDomainExhaustsRetriesOn401(t *testing.T) {
 	finalCount := atomic.LoadInt32(&callCount)
 	if int(finalCount) != addDomainMaxAttempts {
 		t.Errorf("Expected exactly %d attempts, got %d", addDomainMaxAttempts, finalCount)
+	}
+}
+
+func TestClientAddDomainDoesNotRetry401WithErrorDetail(t *testing.T) {
+	log.Print("======================== BEGIN TEST ========================")
+	log.Print("[DEBUG] Running test TestClientAddDomainDoesNotRetry401WithErrorDetail")
+
+	origMaxAttempts := addDomainMaxAttempts
+	origDelay := addDomainRetryDelay
+	addDomainMaxAttempts = 3
+	addDomainRetryDelay = 1 * time.Millisecond
+	defer func() {
+		addDomainMaxAttempts = origMaxAttempts
+		addDomainRetryDelay = origDelay
+	}()
+
+	apiID := "foo"
+	apiKey := "bar"
+	siteID := "111"
+	endpoint := fmt.Sprintf("/site-domain-manager/v2/sites/%s/domains", siteID)
+
+	var callCount int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if req.URL.String() != endpoint {
+			t.Errorf("Should have hit %s endpoint. Got: %s", endpoint, req.URL.String())
+		}
+
+		atomic.AddInt32(&callCount, 1)
+		// 401 WITH a structured error body - a genuine credential/authorization
+		// failure, must NOT be retried.
+		rw.WriteHeader(http.StatusUnauthorized)
+		rw.Write([]byte(`{"errors": [{"id": "error-1", "status": 401, "title": "Unauthorized", "detail": "invalid credentials"}]}`))
+	}))
+	defer server.Close()
+
+	config := &Config{APIID: apiID, APIKey: apiKey, BaseURL: server.URL, BaseURLRev2: server.URL, BaseURLAPI: server.URL}
+	client := &Client{config: config, httpClient: &http.Client{}}
+
+	addDomainResponse, err := client.AddDomainToSite(siteID, "a.co")
+
+	if err == nil {
+		t.Errorf("Should have received an error immediately for 401 with error detail")
+	}
+	if addDomainResponse != nil {
+		t.Errorf("Should have received a nil addDomainResponse instance, got: %v", addDomainResponse)
+	}
+
+	expectedErr := "add domain request failed (status 401): invalid credentials"
+	if err != nil && err.Error() != expectedErr {
+		t.Errorf("Expected error %q, got %q", expectedErr, err.Error())
+	}
+
+	finalCount := atomic.LoadInt32(&callCount)
+	if finalCount != 1 {
+		t.Errorf("Expected exactly 1 attempt (no retry for 401 with error detail), got %d", finalCount)
 	}
 }
 
