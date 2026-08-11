@@ -66,21 +66,25 @@ func (c *Client) AddDomainToSite(siteID string, domainName string) (*SiteDomainD
 	for attempt := 1; attempt <= addDomainMaxAttempts; attempt++ {
 		resp, statusCode, err = handleAddDomainRequest(c, addDomainDto, siteID)
 
-		if statusCode != http.StatusUnauthorized {
-			if err != nil {
-				return nil, err
+		if statusCode == http.StatusUnauthorized {
+
+			// Transient 401: the backend (site-domain-manager) occasionally
+			// rejects the add-domain call shortly after site/cert-settings
+			// creation while authorization scope is still propagating. Retry a
+			// bounded number of times with a short delay before giving up.
+			if attempt < addDomainMaxAttempts {
+				log.Printf("[WARN] Incapsula add domain received 401 (unauthorized) for site %s, attempt %d/%d - retrying after transient auth propagation delay\n", siteID, attempt, addDomainMaxAttempts)
+				time.Sleep(addDomainRetryDelay)
+				continue
 			}
-			return resp, nil
+
+			return nil, fmt.Errorf("add domain request failed after %d attempts: 401 unauthorized (transient auth propagation delay - retry apply if this persists)", addDomainMaxAttempts)
 		}
 
-		// Transient 401: the backend (site-domain-manager) occasionally
-		// rejects the add-domain call shortly after site/cert-settings
-		// creation while authorization scope is still propagating. Retry a
-		// bounded number of times with a short delay before giving up.
-		if attempt < addDomainMaxAttempts {
-			log.Printf("[WARN] Incapsula add domain received 401 (unauthorized) for site %s, attempt %d/%d - retrying after transient auth propagation delay\n", siteID, attempt, addDomainMaxAttempts)
-			time.Sleep(addDomainRetryDelay)
+		if err != nil {
+			return nil, err
 		}
+		return resp, nil
 	}
 
 	return nil, fmt.Errorf("add domain request failed after %d attempts: 401 unauthorized (transient auth propagation delay - retry apply if this persists)", addDomainMaxAttempts)
