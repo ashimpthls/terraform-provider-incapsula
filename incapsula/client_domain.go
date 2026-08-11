@@ -80,14 +80,12 @@ func (c *Client) AddDomainToSite(siteID string, domainName string) (*SiteDomainD
 
 			return nil, fmt.Errorf("add domain request failed after %d attempts: 401 unauthorized (transient auth propagation delay - retry apply if this persists)", addDomainMaxAttempts)
 		}
-
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
 	}
 
-	return nil, fmt.Errorf("add domain request failed after %d attempts: 401 unauthorized (transient auth propagation delay - retry apply if this persists)", addDomainMaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func (c *Client) DeleteDomain(siteID string, domainId string) error {
