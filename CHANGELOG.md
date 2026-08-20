@@ -1,3 +1,15 @@
+## 3.39.3 (Aug 19, 2026)
+
+BUT FIXES:
+- Fix cloud origin resource url ([#675](https://github.com/imperva/terraform-provider-incapsula/pull/675))
+
+
+## 3.39.2 (Aug 13, 2026)
+
+BUT FIXES:
+- Revert fix for: Occasional 401 error when creating domains ([#672](https://github.com/imperva/terraform-provider-incapsula/pull/672))
+
+
 ## 3.39.1 (Aug 11, 2026)
 
 BUT FIXES:
